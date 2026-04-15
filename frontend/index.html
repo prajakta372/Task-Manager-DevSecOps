@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login</title>
+
+    <!-- ✅ External CSS -->
+    <link rel="stylesheet" href="auth.css">
+</head>
+
+<body>
+
+<div class="box">
+    <h2>Login</h2>
+
+    <input type="email" id="email" placeholder="Enter email">
+    <input type="password" id="password" placeholder="Enter password">
+
+   <button onclick="loginUser()">Login</button>
+
+    <p>Don't have account? <a href="signup.html">Signup</a></p>
+</div>
+
+<script>
+async function loginUser() {
+    const email = document.getElementById("email").value;
+    const password = document.getElementById("password").value;
+
+    console.log("Login clicked");
+
+    try {
+        const res = await fetch("http://localhost:3000/login", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ email, password })
+        });
+
+        const data = await res.json();
+        console.log("FULL RESPONSE:", data);
+
+        // ✅ FIX: check userId
+        if (res.ok && data.userId) {
+
+            // ✅ SAVE userId (NOT token)
+            localStorage.setItem("userId", data.userId);
+
+            console.log("USER ID SAVED:", localStorage.getItem("userId"));
+
+            // ✅ REDIRECT
+            window.location.href = "dashboard.html";
+
+        } else {
+            alert(data.message || "Login failed");
+        }
+
+    } catch (error) {
+        console.error("ERROR:", error);
+        alert("Server error");
+    }
+}
+</script>
+
+</body>
+</html>

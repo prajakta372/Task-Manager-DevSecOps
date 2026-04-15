@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signup</title>
+
+    <!-- ✅ Separate CSS -->
+    <link rel="stylesheet" href="signup.css">
+</head>
+
+<body>
+
+<div class="box">
+    <h2>Signup</h2>
+
+    <input type="text" id="name" placeholder="Enter name">
+    <input type="email" id="email" placeholder="Enter email">
+    <input type="password" id="password" placeholder="Enter password">
+
+    <button onclick="signup()">Signup</button>
+
+    <p>Already have account? <a href="index.html">Login</a></p>
+</div>
+
+<script>
+
+const BASE_URL = "http://localhost:3000";
+
+// 🚀 SIGNUP FUNCTION
+async function signup() {
+    const name = document.getElementById("name").value;
+    const email = document.getElementById("email").value;
+    const password = document.getElementById("password").value;
+
+    if (!name || !email || !password) {
+        alert("Please fill all fields");
+        return;
+    }
+
+    try {
+        const res = await fetch(`${BASE_URL}/signup`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ name, email, password })
+        });
+
+        const data = await res.json();
+
+        console.log("SIGNUP RESPONSE:", data); // 🔍 Debug
+
+        if (res.ok) {
+            alert("Signup successful 🎉 Please login");
+
+            // ✅ Redirect to login
+            window.location.href = "dashboard.html";
+        } else {
+            alert(data.message || "Signup failed");
+        }
+
+    } catch (error) {
+        console.error("Signup error:", error);
+        alert("Server error. Please try again.");
+    }
+}
+
+</script>
+
+</body>
+</html>

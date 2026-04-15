@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Manager</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>My Tasks</h1>
+
+<div class="toggle" onclick="toggleTheme()" id="themeToggle">🌙</div>
+
+<!-- Tabs -->
+<div class="tabs">
+    <button onclick="logout()">Logout</button>
+    <button onclick="showTab('add')" class="active" id="addTab">Add</button>
+    <button onclick="showTab('pending')" id="pendingTab">Pending</button>
+    <button onclick="showTab('completed')" id="completedTab">Completed</button>
+</div>
+
+<!-- ADD TASK -->
+<div id="addSection">
+    <input type="text" id="taskInput" placeholder="Enter task">
+    <input type="datetime-local" id="taskTime">
+
+    <label class="reminder">
+        <input type="checkbox" id="reminderToggle">
+        <span>Set Reminder</span>
+    </label>
+
+    <button onclick="addTask()">Add Task</button>
+</div>
+
+<!-- PENDING -->
+<div id="pendingSection" style="display:none;">
+    <ul id="pendingList"></ul>
+</div>
+
+<!-- COMPLETED -->
+<div id="completedSection" style="display:none;">
+    <h3 id="cheerMessage"></h3>
+    <ul id="completedList"></ul>
+</div>
+
+</div>
+
+<audio id="alarmSound" src="Assets/ring.mp3" loop></audio>
+<script>
+
+let allTasks = [];
+let reminderStarted = false;
+let audioUnlocked = false;
+let activeAlarm = null;
+
+// ✅ BASE URL
+const BASE_URL = "http://localhost:3000";
+
+// 🔐 Protect page using userId (NOT token)
+const userId = localStorage.getItem("userId");
+
+if (!userId) {
+    window.location.href = "index.html";
+}
+
+// 🚪 Logout
+function logout() {
+    localStorage.removeItem("userId");
+    window.location.href = "index.html";
+}
+
+// 🔓 Unlock audio
+document.addEventListener("click", () => {
+    if (!audioUnlocked) {
+        const audio = document.getElementById("alarmSound");
+        audio.play().then(() => {
+            audio.pause();
+            audio.currentTime = 0;
+            audioUnlocked = true;
+        }).catch(() => {});
+    }
+});
+
+// 🔔 Notifications
+if ("Notification" in window) {
+    Notification.requestPermission();
+}
+
+// ➕ Add Task
+async function addTask() {
+    const task = document.getElementById('taskInput').value;
+    const time = document.getElementById('taskTime').value;
+    const reminder = document.getElementById('reminderToggle').checked;
+
+    if (!task || !time) {
+        alert("Please enter task and time");
+        return;
+    }
+
+    const res = await fetch(`${BASE_URL}/tasks`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ task, time, reminder, userId })
+    });
+
+    if (!res.ok) {
+        alert("Failed to add task");
+        return;
+    }
+
+    document.getElementById('taskInput').value = '';
+    document.getElementById('taskTime').value = '';
+
+    loadTasks();
+}
+
+function showAlarmPopup(taskText) {
+    const popup = document.createElement("div");
+
+    popup.id = "alarmPopup";
+    popup.innerHTML = `
+        <div style="
+            position: fixed;
+            top: 30%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            z-index: 9999;
+            color: black;
+        ">
+            <h3>⏰ Reminder</h3>
+            <p>${taskText}</p>
+            <button onclick="snoozeAlarm()">Snooze 5 min</button>
+            <button onclick="stopAlarm()">Stop</button>
+        </div>
+    `;
+
+    document.body.appendChild(popup);
+}
+
+
+function snoozeAlarm() {
+    const newTime = new Date();
+    newTime.setMinutes(newTime.getMinutes() + 5);
+
+    activeAlarm.time = newTime.toISOString();
+
+    stopAlarm();
+}
+
+
+// 📥 Load Tasks
+async function loadTasks() {
+    try {
+        const res = await fetch(`${BASE_URL}/tasks/${userId}`);
+
+        if (!res.ok) {
+            alert("Failed to load tasks");
+            return;
+        }
+
+        const data = await res.json();
+        allTasks = data;
+
+        const pendingList = document.getElementById('pendingList');
+        const completedList = document.getElementById('completedList');
+
+        pendingList.innerHTML = '';
+        completedList.innerHTML = '';
+
+        if (data.length === 0) {
+            pendingList.innerHTML = "<li>No tasks yet</li>";
+            return;
+        }
+
+        data.forEach(item => {
+            const li = document.createElement('li');
+
+            const dateObj = new Date(item.time);
+
+            const formattedTime = dateObj.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            const formattedDate = dateObj.toLocaleDateString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric'
+            });
+
+            const dayLabel = getDayLabel(item.time);
+
+            li.innerHTML = `
+                <div class="task-title ${item.completed ? 'completed' : ''}">
+                    ${item.task}
+                </div>
+
+                <div class="task-time">
+                    ${dayLabel !== formattedDate ? dayLabel + ' | ' : ''}${formattedDate} | ${formattedTime}
+                </div>
+
+                <div class="task-actions">
+                    <button onclick="toggleComplete('${item._id}', ${item.completed})">
+                        ${item.completed ? 'Undo' : 'Complete'}
+                    </button>
+                    <button onclick="deleteTask('${item._id}')">Delete</button>
+                </div>
+            `;
+
+            if (item.completed) {
+                completedList.appendChild(li);
+            } else {
+                pendingList.appendChild(li);
+            }
+        });
+
+        if (!reminderStarted) {
+            startReminderChecker();
+            reminderStarted = true;
+        }
+
+    } catch (error) {
+        console.error("Error:", error);
+        alert("Error loading tasks");
+    }
+}
+
+// ❌ Delete Task
+async function deleteTask(id) {
+    await fetch(`${BASE_URL}/tasks/${id}`, {
+        method: 'DELETE'
+    });
+
+    loadTasks();
+}
+
+// 🔁 Toggle Complete
+async function toggleComplete(id, current) {
+    await fetch(`${BASE_URL}/tasks/${id}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ completed: !current })
+    });
+
+    loadTasks();
+}
+
+// 🌙 Theme
+function toggleTheme() {
+    document.body.classList.toggle('light-mode');
+    const toggle = document.getElementById('themeToggle');
+    toggle.innerText = document.body.classList.contains('light-mode') ? "☀️" : "🌙";
+}
+
+// 📅 Day Label
+function getDayLabel(dateString) {
+    const taskDate = new Date(dateString);
+    const today = new Date();
+
+    today.setHours(0,0,0,0);
+    taskDate.setHours(0,0,0,0);
+
+    const diffDays = (taskDate - today) / (1000 * 60 * 60 * 24);
+
+    if (diffDays === 0) return "Today";
+    if (diffDays === 1) return "Tomorrow";
+
+    return taskDate.toLocaleDateString('en-US', { weekday: 'long' });
+}
+
+// 🔔 Reminder Checker
+function startReminderChecker() {
+    setInterval(() => {
+        const now = new Date();
+
+        allTasks.forEach(task => {
+            if (!task.reminder || task.notified) return;
+
+            const taskTime = new Date(task.time);
+            const diff = now - taskTime;
+
+            if (diff >= 0 && diff < 60000) {
+                triggerAlarm(task);
+                task.notified = true;
+            }
+        });
+    }, 5000);
+}
+
+// 🚨 Alarm
+function triggerAlarm(task) {
+    if (activeAlarm) return;
+
+    activeAlarm = task;
+
+    const audio = document.getElementById("alarmSound");
+    audio.currentTime = 0;
+    audio.play();
+
+    // 🔔 Browser notification
+    if (Notification.permission === "granted") {
+        new Notification("⏰ Reminder", {
+            body: task.task
+        });
+    }
+
+    // ✅ SHOW POPUP
+    showAlarmPopup(task.task);
+}
+    
+function stopAlarm() {
+    const audio = document.getElementById("alarmSound");
+    audio.pause();
+    audio.currentTime = 0;
+
+    document.getElementById("alarmPopup")?.remove();
+    activeAlarm = null;
+}
+
+function showTab(type) {
+    document.getElementById('addSection').style.display = 'none';
+    document.getElementById('pendingSection').style.display = 'none';
+    document.getElementById('completedSection').style.display = 'none';
+
+    document.getElementById('addTab').classList.remove('active');
+    document.getElementById('pendingTab').classList.remove('active');
+    document.getElementById('completedTab').classList.remove('active');
+
+    document.getElementById(type + 'Section').style.display = 'block';
+    document.getElementById(type + 'Tab').classList.add('active');
+}
+
+// 🚀 INIT
+loadTasks();
+showTab('pending');
+
+
+</script>
+
+</body>
+</html>

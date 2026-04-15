@@ -1,0 +1,318 @@
+/* RESET */
+* {
+    box-sizing: border-box;
+    font-family: 'Segoe UI', sans-serif;
+}
+
+/* BODY */
+body {
+    margin: 0;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #1d2671, #c33764);
+    display: flex;
+    justify-content: center;
+    align-items: center;  /* ✅ center vertically */
+}
+
+
+h3 {
+    margin-top: 15px;
+    font-size: 16px;
+    opacity: 0.8;
+}
+
+
+/* CONTAINER */
+.container {
+    width: 100%;
+    max-width: 500px;
+    padding: 20px;
+    border-radius: 20px;
+    backdrop-filter: blur(15px);
+    background: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    color: white;
+    /* margin-top: 200px; */
+}
+@media (max-width: 1024px) {
+
+    body {
+        padding: 5px;
+    }
+
+    .container {
+        padding: 15px;
+        margin-top: 20%;
+        margin-bottom:20%;
+    }
+
+    h1 {
+        font-size: 20px;
+    }
+
+    .dashboard {
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .task-actions {
+        flex-direction: column;
+    }
+
+    .filters {
+        flex-direction: column;
+    }
+}
+
+
+/* HEADER */
+h1 {
+    text-align: center;
+    margin-bottom: 15px;
+}
+
+/* INPUTS */
+input, button {
+    width: 100%;
+    padding: 12px;
+    margin-top: 8px;
+    border-radius: 10px;
+    border: none;
+}
+
+/* INPUT STYLE */
+input {
+    background: rgba(255,255,255,0.2);
+    color: white;
+}
+
+input::placeholder {
+    color: #ddd;
+}
+
+/* BUTTON */
+button {
+    background: linear-gradient(135deg, #ff9966, #ff5e62);
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+/* FILTER BUTTONS */
+.filters {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 10px;
+}
+
+.filters button {
+    flex: 1;
+    font-size: 12px;
+}
+
+/* DASHBOARD */
+.dashboard {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    font-size: 13px;
+}
+
+/* TASK LIST */
+ul {
+    list-style: none;
+    padding: 0;
+}
+
+/* TASK CARD */
+li {
+    padding: 12px;
+    margin-bottom: 10px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.15);
+    display: flex;
+    flex-direction: column;
+}
+
+/* TASK TEXT */
+.task-title {
+    font-weight: bold;
+}
+
+.task-time {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+/* ACTION BUTTONS */
+.task-actions {
+    display: flex;
+    gap: 5px;
+    margin-top: 8px;
+}
+
+.task-actions button {
+    flex: 1;
+    font-size: 12px;
+}
+
+/* COMPLETED */
+.completed {
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+
+/* TOGGLE */
+.toggle {
+    text-align: right;
+    margin-bottom: 10px;
+    cursor: pointer;
+}
+
+/* LIGHT MODE */
+.light-mode {
+    background: #f5f5f5;
+}
+
+.light-mode .container {
+    background: white;
+    color: black;
+}
+
+/* 📱 MOBILE RESPONSIVE */
+@media (max-width: 600px) {
+
+    body {
+        padding: 5px;
+    }
+
+    .container {
+        padding: 15px;
+    }
+
+    h1 {
+        font-size: 20px;
+    }
+
+    .dashboard {
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .task-actions {
+        flex-direction: column;
+    }
+
+    .filters {
+        flex-direction: column;
+    }
+}
+
+
+@media (max-width: 600px) {
+    body {
+        align-items: flex-start; /* better for scrolling */
+        padding-top: 20px;
+    }
+}
+
+
+.container {
+    /* margin: auto; */
+    margin-top: 20%;
+    margin-bottom: 20%;
+    position: fixed;
+}
+
+.toggle {
+    text-align: right;
+    font-size: 20px;
+    cursor: pointer;
+    margin-bottom: 10px;
+    transition: 0.3s;
+}
+
+.toggle:hover {
+    transform: scale(1.2);
+}
+
+.tabs {
+    display: flex;
+    margin-bottom: 10px;
+    gap: 5px;
+}
+
+.tabs button {
+    flex: 1;
+    padding: 10px;
+    border-radius: 8px;
+    border: none;
+    background: rgba(255,255,255,0.2);
+    color: white;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.tabs button.active {
+    background: linear-gradient(135deg, #ff9966, #ff5e62);
+}
+
+/* scrollbar */
+/* Scrollable task sections */
+/* ✅ Scroll ONLY inside tab content */
+#pendingSection,
+#completedSection {
+    max-height: 400px;   /* adjust based on your UI */
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 5px;
+}
+
+/* Smooth scrollbar */
+#pendingSection::-webkit-scrollbar,
+#completedSection::-webkit-scrollbar {
+    width: 6px;
+}
+
+#pendingSection::-webkit-scrollbar-thumb,
+#completedSection::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.5);
+    border-radius: 10px;
+}
+
+/* Mobile */
+@media (max-width: 600px) {
+    #pendingSection,
+    #completedSection {
+        max-height: 250px;
+    }
+}
+
+/* hide scrollbar for browser */
+/* Hide scrollbar for whole page (but allow scrolling) */
+body::-webkit-scrollbar {
+    display: none;
+}
+
+/* for checkbox */
+.reminder {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+/* Make checkbox look better */
+.reminder input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.reminder {
+    background: rgba(255,255,255,0.2);
+    padding: 8px;
+    border-radius: 8px;
+}
