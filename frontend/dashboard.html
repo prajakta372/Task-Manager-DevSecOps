@@ -23,6 +23,14 @@
     <button onclick="showTab('completed')" id="completedTab">Completed</button>
 </div>
 
+<!-- <select id="userSelect"></select> -->
+
+<!-- <select id="priority">
+  <option value="low">Low</option>
+  <option value="medium" selected>Medium</option>
+  <option value="high">High</option>
+</select> -->
+
 <!-- ADD TASK -->
 <div id="addSection">
     <input type="text" id="taskInput" placeholder="Enter task">
@@ -62,6 +70,7 @@ const BASE_URL = "http://localhost:3000";
 
 // 🔐 Protect page using userId (NOT token)
 const userId = localStorage.getItem("userId");
+const role = localStorage.getItem("role") || "user";
 
 if (!userId) {
     window.location.href = "index.html";
@@ -70,6 +79,7 @@ if (!userId) {
 // 🚪 Logout
 function logout() {
     localStorage.removeItem("userId");
+    localStorage.removeItem("role");
     window.location.href = "index.html";
 }
 
@@ -89,6 +99,7 @@ document.addEventListener("click", () => {
 if ("Notification" in window) {
     Notification.requestPermission();
 }
+
 
 // ➕ Add Task
 async function addTask() {
@@ -340,6 +351,23 @@ function showTab(type) {
 
     document.getElementById(type + 'Section').style.display = 'block';
     document.getElementById(type + 'Tab').classList.add('active');
+}
+
+
+async function loadUsersForAdmin() {
+  const res = await fetch(`${BASE_URL}/users-by-admin/${userId}`);
+  const users = await res.json();
+
+  const select = document.getElementById("userSelect");
+  select.innerHTML = "";
+
+  users.forEach(u => {
+    select.innerHTML += `<option value="${u._id}">${u.name}</option>`;
+  });
+}
+
+if (role === "admin") {
+    loadUsersForAdmin();
 }
 
 // 🚀 INIT
