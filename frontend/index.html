@@ -46,6 +46,7 @@ async function loginUser() {
 
             // ✅ SAVE userId (NOT token)
             localStorage.setItem("userId", data.userId);
+            localStorage.setItem("role", data.role || "user");
 
             console.log("USER ID SAVED:", localStorage.getItem("userId"));
 
