@@ -1,51 +1,63 @@
-const bcrypt = require('bcrypt');
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-require('dotenv').config();
+const bcrypt = require('bcrypt');
 
 const app = express();
 
+// Enable CORS for all origins
 app.use(cors());
 app.use(express.json());
 
 /* ===========================
    📦 DB CONNECTION
 =========================== */
-const MONGO_URL = process.env.MONGO_URL || 'mongodb://127.0.0.1:27017/taskdb';
+const MONGO_URL = process.env.MONGO_URL;
+
+if (!MONGO_URL) {
+  console.error("❌ MONGO_URL is not defined in the .env file");
+  process.exit(1);
+}
 
 mongoose.connect(MONGO_URL)
-.then(() => console.log("MongoDB Connected"))
-.catch(err => console.log(err));
+  .then(() => {
+    console.log("✅ MongoDB Connected Successfully");
+  })
+  .catch((err) => {
+    console.error("❌ MongoDB Connection Failed");
+    console.error(err);
+  });
 
 /* ===========================
    📦 SCHEMAS
 =========================== */
 
-// USER
+// USER Schema
 const userSchema = new mongoose.Schema({
-    name: String,
-    email: { type: String, unique: true },
-    password: String
+    name: { type: String, required: true },
+    email: { type: String, unique: true, required: true },
+    password: { type: String, required: true },
+    role: { type: String, default: 'user' }
 });
 const User = mongoose.model('User', userSchema);
 
-// TASK
+// TASK Schema
 const taskSchema = new mongoose.Schema({
-    task: String,
-    time: String,
-    reminder: Boolean,
+    task: { type: String, required: true },
+    time: { type: String, required: true },
+    reminder: { type: Boolean, default: false },
     completed: { type: Boolean, default: false },
-    userId: String
+    userId: { type: String, required: true }
 }, { timestamps: true });
 
 const Task = mongoose.model('Task', taskSchema);
 
 /* ===========================
-   🏠 HEALTH
+   🏠 HEALTH ROUTE
 =========================== */
 app.get('/', (req, res) => {
-    res.send('Backend running 🚀');
+    res.send('🚀 Task Manager API is Running');
 });
 
 /* ===========================
@@ -53,14 +65,25 @@ app.get('/', (req, res) => {
 =========================== */
 app.post('/signup', async (req, res) => {
     try {
-        const { name, email, password } = req.body;
+        const { name, email, password, role } = req.body;
+
+        if (!name || !email || !password) {
+            return res.status(400).json({ message: "All fields are required" });
+        }
 
         const exists = await User.findOne({ email });
-        if (exists) return res.status(400).json({ message: "User exists" });
+        if (exists) {
+            return res.status(400).json({ message: "User already exists" });
+        }
 
         const hashed = await bcrypt.hash(password, 10);
 
-        const user = new User({ name, email, password: hashed });
+        const user = new User({ 
+            name, 
+            email, 
+            password: hashed,
+            role: role || 'user' 
+        });
         await user.save();
 
         res.json({ message: "Signup successful" });
@@ -77,18 +100,42 @@ app.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
 
+        if (!email || !password) {
+            return res.status(400).json({ message: "Email and password are required" });
+        }
+
         const user = await User.findOne({ email });
-        if (!user) return res.status(400).json({ message: "User not found" });
+        if (!user) {
+            return res.status(400).json({ message: "User not found" });
+        }
 
         const match = await bcrypt.compare(password, user.password);
-        if (!match) return res.status(400).json({ message: "Wrong password" });
+        if (!match) {
+            return res.status(400).json({ message: "Wrong password" });
+        }
 
-        // ✅ IMPORTANT: send userId
         res.json({
             message: "Login successful",
-            userId: user._id
+            userId: user._id,
+            role: user.role || 'user'
         });
 
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* ===========================
+   👥 GET ALL USERS FOR ADMIN
+=========================== */
+app.get('/users-by-admin/:userId', async (req, res) => {
+    try {
+        const adminUser = await User.findById(req.params.userId);
+        if (!adminUser || adminUser.role !== 'admin') {
+            return res.status(403).json({ error: "Access denied" });
+        }
+        const users = await User.find({}, 'name email role');
+        res.json(users);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -108,7 +155,7 @@ app.post('/tasks', async (req, res) => {
         const newTask = new Task({
             task,
             time,
-            reminder,
+            reminder: !!reminder,
             userId
         });
 
@@ -121,7 +168,7 @@ app.post('/tasks', async (req, res) => {
 });
 
 /* ===========================
-   📥 GET USER TASKS (FIXED)
+   📥 GET USER TASKS
 =========================== */
 app.get('/tasks/:userId', async (req, res) => {
     try {
@@ -166,10 +213,10 @@ app.delete('/tasks/:id', async (req, res) => {
 });
 
 /* ===========================
-   🚀 SERVER
+   🚀 START SERVER
 =========================== */
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT} 🚀`);
+    console.log(`🚀 Server running on port ${PORT}`);
 });
