@@ -1,215 +1,334 @@
 require('dotenv').config();
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
+const morgan = require('morgan');
+const { Pool } = require('pg');
 
 const app = express();
 
-// Enable CORS for all origins
+/* ===========================
+   📜 LOGGER CONFIGURATION
+=========================== */
+const logger = {
+  info: (msg) => console.log(`[${new Date().toISOString()}] [INFO] ${msg}`),
+  error: (msg, err) => console.error(`[${new Date().toISOString()}] [ERROR] ${msg}`, err || ''),
+  warn: (msg) => console.warn(`[${new Date().toISOString()}] [WARN] ${msg}`)
+};
+
+// Enable HTTP request logging using Morgan
+app.use(morgan('combined'));
+
+// Enable CORS for all origins and JSON parser
 app.use(cors());
 app.use(express.json());
 
 /* ===========================
-   📦 DB CONNECTION
+   📦 DB CONNECTION (PostgreSQL)
 =========================== */
-const MONGO_URL = process.env.MONGO_URL;
+const poolConfig = process.env.DATABASE_URL
+  ? { connectionString: process.env.DATABASE_URL }
+  : {
+      user: process.env.POSTGRES_USER || 'postgres',
+      password: process.env.POSTGRES_PASSWORD || 'postgres',
+      host: process.env.POSTGRES_HOST || 'localhost',
+      port: parseInt(process.env.POSTGRES_PORT, 10) || 5432,
+      database: process.env.POSTGRES_DB || 'taskdb'
+    };
 
-if (!MONGO_URL) {
-  console.error("❌ MONGO_URL is not defined in the .env file");
-  process.exit(1);
+const pool = new Pool(poolConfig);
+
+// Initialize Tables on Startup
+async function initDb() {
+  const createUsersTable = `
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) UNIQUE NOT NULL,
+      password VARCHAR(255) NOT NULL,
+      role VARCHAR(50) DEFAULT 'user',
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+
+  const createTasksTable = `
+    CREATE TABLE IF NOT EXISTS tasks (
+      id SERIAL PRIMARY KEY,
+      task TEXT NOT NULL,
+      time VARCHAR(255) NOT NULL,
+      reminder BOOLEAN DEFAULT FALSE,
+      completed BOOLEAN DEFAULT FALSE,
+      user_id VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+
+  try {
+    await pool.query(createUsersTable);
+    await pool.query(createTasksTable);
+    logger.info('✅ PostgreSQL Tables Initialized Successfully');
+  } catch (err) {
+    logger.error('❌ Failed to initialize PostgreSQL tables', err);
+  }
 }
 
-mongoose.connect(MONGO_URL)
-  .then(() => {
-    console.log("✅ MongoDB Connected Successfully");
+// Test DB Connection
+pool.connect()
+  .then(client => {
+    logger.info('✅ PostgreSQL Connected Successfully');
+    client.release();
+    initDb();
   })
-  .catch((err) => {
-    console.error("❌ MongoDB Connection Failed");
-    console.error(err);
+  .catch(err => {
+    logger.error('❌ PostgreSQL Connection Failed', err);
   });
 
 /* ===========================
-   📦 SCHEMAS
-=========================== */
-
-// USER Schema
-const userSchema = new mongoose.Schema({
-    name: { type: String, required: true },
-    email: { type: String, unique: true, required: true },
-    password: { type: String, required: true },
-    role: { type: String, default: 'user' }
-});
-const User = mongoose.model('User', userSchema);
-
-// TASK Schema
-const taskSchema = new mongoose.Schema({
-    task: { type: String, required: true },
-    time: { type: String, required: true },
-    reminder: { type: Boolean, default: false },
-    completed: { type: Boolean, default: false },
-    userId: { type: String, required: true }
-}, { timestamps: true });
-
-const Task = mongoose.model('Task', taskSchema);
-
-/* ===========================
-   🏠 HEALTH ROUTE
+   🏠 API HEALTH ENDPOINT & BASE ROUTE
 =========================== */
 app.get('/', (req, res) => {
-    res.send('🚀 Task Manager API is Running');
+  res.send('🚀 Task Manager API is Running');
+});
+
+// Explicit Health Check Endpoint
+app.get('/health', async (req, res) => {
+  let dbStatus = 'disconnected';
+  let dbError = null;
+
+  try {
+    await pool.query('SELECT 1');
+    dbStatus = 'connected';
+  } catch (err) {
+    dbError = err.message;
+    logger.error('Health check database query failed', err);
+  }
+
+  const isHealthy = dbStatus === 'connected';
+  const statusCode = isHealthy ? 200 : 500;
+
+  res.status(statusCode).json({
+    status: isHealthy ? 'UP' : 'DOWN',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    database: {
+      status: dbStatus,
+      error: dbError
+    }
+  });
 });
 
 /* ===========================
    🔐 SIGNUP
 =========================== */
 app.post('/signup', async (req, res) => {
-    try {
-        const { name, email, password, role } = req.body;
+  try {
+    const { name, email, password, role } = req.body;
 
-        if (!name || !email || !password) {
-            return res.status(400).json({ message: "All fields are required" });
-        }
-
-        const exists = await User.findOne({ email });
-        if (exists) {
-            return res.status(400).json({ message: "User already exists" });
-        }
-
-        const hashed = await bcrypt.hash(password, 10);
-
-        const user = new User({ 
-            name, 
-            email, 
-            password: hashed,
-            role: role || 'user' 
-        });
-        await user.save();
-
-        res.json({ message: "Signup successful" });
-
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: "All fields are required" });
     }
+
+    const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ message: "User already exists" });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+    const userRole = role || 'user';
+
+    await pool.query(
+      'INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4)',
+      [name, email, hashed, userRole]
+    );
+
+    logger.info(`New user signed up: ${email}`);
+    res.json({ message: "Signup successful" });
+
+  } catch (err) {
+    logger.error('Signup error', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ===========================
    🔑 LOGIN
 =========================== */
 app.post('/login', async (req, res) => {
-    try {
-        const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-        if (!email || !password) {
-            return res.status(400).json({ message: "Email and password are required" });
-        }
-
-        const user = await User.findOne({ email });
-        if (!user) {
-            return res.status(400).json({ message: "User not found" });
-        }
-
-        const match = await bcrypt.compare(password, user.password);
-        if (!match) {
-            return res.status(400).json({ message: "Wrong password" });
-        }
-
-        res.json({
-            message: "Login successful",
-            userId: user._id,
-            role: user.role || 'user'
-        });
-
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
     }
+
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: "User not found" });
+    }
+
+    const user = result.rows[0];
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      return res.status(400).json({ message: "Wrong password" });
+    }
+
+    logger.info(`User logged in: ${email}`);
+    res.json({
+      message: "Login successful",
+      userId: user.id.toString(),
+      role: user.role || 'user'
+    });
+
+  } catch (err) {
+    logger.error('Login error', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ===========================
    👥 GET ALL USERS FOR ADMIN
 =========================== */
 app.get('/users-by-admin/:userId', async (req, res) => {
-    try {
-        const adminUser = await User.findById(req.params.userId);
-        if (!adminUser || adminUser.role !== 'admin') {
-            return res.status(403).json({ error: "Access denied" });
-        }
-        const users = await User.find({}, 'name email role');
-        res.json(users);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+  try {
+    const adminRes = await pool.query('SELECT * FROM users WHERE id = $1', [req.params.userId]);
+    if (adminRes.rows.length === 0 || adminRes.rows[0].role !== 'admin') {
+      return res.status(403).json({ error: "Access denied" });
     }
+
+    const usersRes = await pool.query('SELECT id, name, email, role FROM users');
+    res.json(usersRes.rows);
+  } catch (err) {
+    logger.error('Admin users fetch error', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ===========================
    ➕ ADD TASK
 =========================== */
 app.post('/tasks', async (req, res) => {
-    try {
-        const { task, time, reminder, userId } = req.body;
+  try {
+    const { task, time, reminder, userId } = req.body;
 
-        if (!task || !time || !userId) {
-            return res.status(400).json({ error: "All fields required" });
-        }
-
-        const newTask = new Task({
-            task,
-            time,
-            reminder: !!reminder,
-            userId
-        });
-
-        await newTask.save();
-        res.json(newTask);
-
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+    if (!task || !time || !userId) {
+      return res.status(400).json({ error: "All fields required" });
     }
+
+    const result = await pool.query(
+      'INSERT INTO tasks (task, time, reminder, completed, user_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [task, time, !!reminder, false, userId.toString()]
+    );
+
+    const t = result.rows[0];
+    const responseTask = {
+      id: t.id,
+      _id: t.id.toString(),
+      task: t.task,
+      time: t.time,
+      reminder: t.reminder,
+      completed: t.completed,
+      userId: t.user_id,
+      createdAt: t.created_at
+    };
+
+    logger.info(`Task created for user ${userId}: "${task}"`);
+    res.json(responseTask);
+
+  } catch (err) {
+    logger.error('Add task error', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ===========================
    📥 GET USER TASKS
 =========================== */
 app.get('/tasks/:userId', async (req, res) => {
-    try {
-        const tasks = await Task.find({ userId: req.params.userId })
-            .sort({ createdAt: -1 });
+  try {
+    const result = await pool.query(
+      'SELECT * FROM tasks WHERE user_id = $1 ORDER BY created_at DESC',
+      [req.params.userId.toString()]
+    );
 
-        res.json(tasks);
+    const tasks = result.rows.map(t => ({
+      id: t.id,
+      _id: t.id.toString(),
+      task: t.task,
+      time: t.time,
+      reminder: t.reminder,
+      completed: t.completed,
+      userId: t.user_id,
+      createdAt: t.created_at
+    }));
 
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    res.json(tasks);
+
+  } catch (err) {
+    logger.error('Get tasks error', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ===========================
    🔁 UPDATE TASK
 =========================== */
 app.put('/tasks/:id', async (req, res) => {
-    try {
-        const updated = await Task.findByIdAndUpdate(
-            req.params.id,
-            req.body,
-            { new: true }
-        );
-        res.json(updated);
+  try {
+    const taskId = req.params.id;
+    const { task, time, reminder, completed } = req.body;
 
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+    // Fetch existing task
+    const existing = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: "Task not found" });
     }
+
+    const current = existing.rows[0];
+    const updatedTask = task !== undefined ? task : current.task;
+    const updatedTime = time !== undefined ? time : current.time;
+    const updatedReminder = reminder !== undefined ? !!reminder : current.reminder;
+    const updatedCompleted = completed !== undefined ? !!completed : current.completed;
+
+    const result = await pool.query(
+      'UPDATE tasks SET task = $1, time = $2, reminder = $3, completed = $4 WHERE id = $5 RETURNING *',
+      [updatedTask, updatedTime, updatedReminder, updatedCompleted, taskId]
+    );
+
+    const t = result.rows[0];
+    const responseTask = {
+      id: t.id,
+      _id: t.id.toString(),
+      task: t.task,
+      time: t.time,
+      reminder: t.reminder,
+      completed: t.completed,
+      userId: t.user_id,
+      createdAt: t.created_at
+    };
+
+    logger.info(`Task updated: ${taskId}`);
+    res.json(responseTask);
+
+  } catch (err) {
+    logger.error('Update task error', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ===========================
    ❌ DELETE TASK
 =========================== */
 app.delete('/tasks/:id', async (req, res) => {
-    try {
-        await Task.findByIdAndDelete(req.params.id);
-        res.json({ message: "Deleted" });
+  try {
+    const taskId = req.params.id;
+    await pool.query('DELETE FROM tasks WHERE id = $1', [taskId]);
+    logger.info(`Task deleted: ${taskId}`);
+    res.json({ message: "Deleted" });
 
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  } catch (err) {
+    logger.error('Delete task error', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ===========================
@@ -218,5 +337,5 @@ app.delete('/tasks/:id', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+  logger.info(`🚀 Server running on port ${PORT}`);
 });
