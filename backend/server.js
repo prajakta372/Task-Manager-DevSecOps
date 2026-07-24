@@ -3,7 +3,9 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const morgan = require('morgan');
+const path = require('path');
 const { Pool } = require('pg');
+const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 
@@ -19,28 +21,102 @@ const logger = {
 // Enable HTTP request logging using Morgan
 app.use(morgan('combined'));
 
-// Enable CORS for all origins and JSON parser
+// Enable CORS for all origins and JSON body parser
 app.use(cors());
 app.use(express.json());
 
 /* ===========================
-   📦 DB CONNECTION (PostgreSQL)
+   📦 DATABASE ABSTRACTION (PostgreSQL with SQLite Fallback)
 =========================== */
+let dbMode = 'none'; // 'postgresql' or 'sqlite'
+let pgPool = null;
+let sqliteDb = null;
+
 const poolConfig = process.env.DATABASE_URL
-  ? { connectionString: process.env.DATABASE_URL }
+  ? { connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 3000 }
   : {
       user: process.env.POSTGRES_USER || 'postgres',
       password: process.env.POSTGRES_PASSWORD || 'postgres',
       host: process.env.POSTGRES_HOST || 'localhost',
       port: parseInt(process.env.POSTGRES_PORT, 10) || 5432,
-      database: process.env.POSTGRES_DB || 'taskdb'
+      database: process.env.POSTGRES_DB || 'taskdb',
+      connectionTimeoutMillis: 3000
     };
 
-const pool = new Pool(poolConfig);
+// Format SQL queries depending on active database engine
+function formatSql(sql, mode) {
+  if (mode === 'sqlite') {
+    // Replace $1, $2, $3 with ? for SQLite
+    return sql.replace(/\$\d+/g, '?');
+  }
+  return sql;
+}
 
-// Initialize Tables on Startup
-async function initDb() {
-  const createUsersTable = `
+// Unified Query Execution Helper
+async function queryAll(sql, params = []) {
+  if (dbMode === 'postgresql') {
+    const res = await pgPool.query(sql, params);
+    return res.rows;
+  } else if (dbMode === 'sqlite') {
+    const formatted = formatSql(sql, 'sqlite');
+    return new Promise((resolve, reject) => {
+      sqliteDb.all(formatted, params, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+  } else {
+    throw new Error('Database not initialized');
+  }
+}
+
+async function queryOne(sql, params = []) {
+  const rows = await queryAll(sql, params);
+  return rows.length > 0 ? rows[0] : null;
+}
+
+async function executeInsert(sql, params = [], tableName = '') {
+  if (dbMode === 'postgresql') {
+    const returningSql = sql.includes('RETURNING') ? sql : `${sql} RETURNING *`;
+    const res = await pgPool.query(returningSql, params);
+    return res.rows[0];
+  } else if (dbMode === 'sqlite') {
+    const formatted = formatSql(sql, 'sqlite');
+    return new Promise((resolve, reject) => {
+      sqliteDb.run(formatted, params, function (err) {
+        if (err) return reject(err);
+        const lastId = this.lastID;
+        sqliteDb.get(`SELECT * FROM ${tableName} WHERE id = ?`, [lastId], (err2, row) => {
+          if (err2) reject(err2);
+          else resolve(row);
+        });
+      });
+    });
+  } else {
+    throw new Error('Database not initialized');
+  }
+}
+
+async function executeUpdateOrDelete(sql, params = []) {
+  if (dbMode === 'postgresql') {
+    const res = await pgPool.query(sql, params);
+    return res;
+  } else if (dbMode === 'sqlite') {
+    const formatted = formatSql(sql, 'sqlite');
+    return new Promise((resolve, reject) => {
+      sqliteDb.run(formatted, params, function (err) {
+        if (err) reject(err);
+        else resolve({ rowCount: this.changes });
+      });
+    });
+  } else {
+    throw new Error('Database not initialized');
+  }
+}
+
+// Initialize Database Tables
+async function initTables() {
+  const usersSql = dbMode === 'postgresql' ? `
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
@@ -49,9 +125,18 @@ async function initDb() {
       role VARCHAR(50) DEFAULT 'user',
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
+  ` : `
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      role TEXT DEFAULT 'user',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `;
 
-  const createTasksTable = `
+  const tasksSql = dbMode === 'postgresql' ? `
     CREATE TABLE IF NOT EXISTS tasks (
       id SERIAL PRIMARY KEY,
       task TEXT NOT NULL,
@@ -61,27 +146,58 @@ async function initDb() {
       user_id VARCHAR(255) NOT NULL,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
+  ` : `
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task TEXT NOT NULL,
+      time TEXT NOT NULL,
+      reminder INTEGER DEFAULT 0,
+      completed INTEGER DEFAULT 0,
+      user_id TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `;
 
+  if (dbMode === 'postgresql') {
+    await pgPool.query(usersSql);
+    await pgPool.query(tasksSql);
+  } else {
+    await new Promise((res, rej) => sqliteDb.run(usersSql, (err) => err ? rej(err) : res()));
+    await new Promise((res, rej) => sqliteDb.run(tasksSql, (err) => err ? rej(err) : res()));
+  }
+  logger.info(`✅ Database Tables Initialized Successfully (${dbMode.toUpperCase()})`);
+}
+
+// Database Initialization Strategy
+async function setupDatabase() {
+  // Try connecting to PostgreSQL first
   try {
-    await pool.query(createUsersTable);
-    await pool.query(createTasksTable);
-    logger.info('✅ PostgreSQL Tables Initialized Successfully');
+    const testPool = new Pool(poolConfig);
+    const client = await testPool.connect();
+    client.release();
+    pgPool = testPool;
+    dbMode = 'postgresql';
+    logger.info('✅ PostgreSQL Connected Successfully');
+    await initTables();
+    return;
   } catch (err) {
-    logger.error('❌ Failed to initialize PostgreSQL tables', err);
+    logger.warn(`⚠️ PostgreSQL connection unavailable (${err.message}). Falling back to local SQLite database.`);
+  }
+
+  // Fallback to SQLite
+  try {
+    const dbPath = path.join(__dirname, 'taskmanager.sqlite');
+    sqliteDb = new sqlite3.Database(dbPath);
+    dbMode = 'sqlite';
+    logger.info(`✅ Local SQLite Database Connected (${dbPath})`);
+    await initTables();
+  } catch (err) {
+    logger.error('❌ Failed to initialize any database engine', err);
   }
 }
 
-// Test DB Connection
-pool.connect()
-  .then(client => {
-    logger.info('✅ PostgreSQL Connected Successfully');
-    client.release();
-    initDb();
-  })
-  .catch(err => {
-    logger.error('❌ PostgreSQL Connection Failed', err);
-  });
+// Run DB setup on server start
+setupDatabase();
 
 /* ===========================
    🏠 API HEALTH ENDPOINT & BASE ROUTE
@@ -92,26 +208,31 @@ app.get('/', (req, res) => {
 
 // Explicit Health Check Endpoint
 app.get('/health', async (req, res) => {
-  let dbStatus = 'disconnected';
+  let isDbHealthy = false;
   let dbError = null;
 
   try {
-    await pool.query('SELECT 1');
-    dbStatus = 'connected';
+    if (dbMode === 'postgresql') {
+      await pgPool.query('SELECT 1');
+      isDbHealthy = true;
+    } else if (dbMode === 'sqlite') {
+      await queryOne('SELECT 1');
+      isDbHealthy = true;
+    }
   } catch (err) {
     dbError = err.message;
     logger.error('Health check database query failed', err);
   }
 
-  const isHealthy = dbStatus === 'connected';
-  const statusCode = isHealthy ? 200 : 500;
+  const statusCode = isDbHealthy ? 200 : 500;
 
   res.status(statusCode).json({
-    status: isHealthy ? 'UP' : 'DOWN',
+    status: isDbHealthy ? 'UP' : 'DOWN',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     database: {
-      status: dbStatus,
+      mode: dbMode,
+      status: isDbHealthy ? 'connected' : 'error',
       error: dbError
     }
   });
@@ -125,20 +246,21 @@ app.post('/signup', async (req, res) => {
     const { name, email, password, role } = req.body;
 
     if (!name || !email || !password) {
-      return res.status(400).json({ message: "All fields are required" });
+      return res.status(400).json({ message: "All fields are required", error: "All fields are required" });
     }
 
-    const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({ message: "User already exists" });
+    const existingUser = await queryOne('SELECT id FROM users WHERE email = $1', [email]);
+    if (existingUser) {
+      return res.status(400).json({ message: "User already exists", error: "User already exists" });
     }
 
     const hashed = await bcrypt.hash(password, 10);
     const userRole = role || 'user';
 
-    await pool.query(
+    await executeInsert(
       'INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4)',
-      [name, email, hashed, userRole]
+      [name, email, hashed, userRole],
+      'users'
     );
 
     logger.info(`New user signed up: ${email}`);
@@ -146,7 +268,7 @@ app.post('/signup', async (req, res) => {
 
   } catch (err) {
     logger.error('Signup error', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: err.message, error: err.message });
   }
 });
 
@@ -158,18 +280,17 @@ app.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ message: "Email and password are required" });
+      return res.status(400).json({ message: "Email and password are required", error: "Email and password are required" });
     }
 
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (result.rows.length === 0) {
-      return res.status(400).json({ message: "User not found" });
+    const user = await queryOne('SELECT * FROM users WHERE email = $1', [email]);
+    if (!user) {
+      return res.status(400).json({ message: "User not found", error: "User not found" });
     }
 
-    const user = result.rows[0];
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
-      return res.status(400).json({ message: "Wrong password" });
+      return res.status(400).json({ message: "Wrong password", error: "Wrong password" });
     }
 
     logger.info(`User logged in: ${email}`);
@@ -181,7 +302,7 @@ app.post('/login', async (req, res) => {
 
   } catch (err) {
     logger.error('Login error', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: err.message, error: err.message });
   }
 });
 
@@ -190,16 +311,16 @@ app.post('/login', async (req, res) => {
 =========================== */
 app.get('/users-by-admin/:userId', async (req, res) => {
   try {
-    const adminRes = await pool.query('SELECT * FROM users WHERE id = $1', [req.params.userId]);
-    if (adminRes.rows.length === 0 || adminRes.rows[0].role !== 'admin') {
-      return res.status(403).json({ error: "Access denied" });
+    const adminUser = await queryOne('SELECT * FROM users WHERE id = $1', [req.params.userId]);
+    if (!adminUser || adminUser.role !== 'admin') {
+      return res.status(403).json({ message: "Access denied", error: "Access denied" });
     }
 
-    const usersRes = await pool.query('SELECT id, name, email, role FROM users');
-    res.json(usersRes.rows);
+    const users = await queryAll('SELECT id, name, email, role FROM users');
+    res.json(users);
   } catch (err) {
     logger.error('Admin users fetch error', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: err.message, error: err.message });
   }
 });
 
@@ -211,24 +332,24 @@ app.post('/tasks', async (req, res) => {
     const { task, time, reminder, userId } = req.body;
 
     if (!task || !time || !userId) {
-      return res.status(400).json({ error: "All fields required" });
+      return res.status(400).json({ message: "All fields required", error: "All fields required" });
     }
 
-    const result = await pool.query(
-      'INSERT INTO tasks (task, time, reminder, completed, user_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [task, time, !!reminder, false, userId.toString()]
+    const inserted = await executeInsert(
+      'INSERT INTO tasks (task, time, reminder, completed, user_id) VALUES ($1, $2, $3, $4, $5)',
+      [task, time, reminder ? 1 : 0, 0, userId.toString()],
+      'tasks'
     );
 
-    const t = result.rows[0];
     const responseTask = {
-      id: t.id,
-      _id: t.id.toString(),
-      task: t.task,
-      time: t.time,
-      reminder: t.reminder,
-      completed: t.completed,
-      userId: t.user_id,
-      createdAt: t.created_at
+      id: inserted.id,
+      _id: inserted.id.toString(),
+      task: inserted.task,
+      time: inserted.time,
+      reminder: Boolean(inserted.reminder),
+      completed: Boolean(inserted.completed),
+      userId: inserted.user_id,
+      createdAt: inserted.created_at
     };
 
     logger.info(`Task created for user ${userId}: "${task}"`);
@@ -236,7 +357,7 @@ app.post('/tasks', async (req, res) => {
 
   } catch (err) {
     logger.error('Add task error', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: err.message, error: err.message });
   }
 });
 
@@ -245,18 +366,18 @@ app.post('/tasks', async (req, res) => {
 =========================== */
 app.get('/tasks/:userId', async (req, res) => {
   try {
-    const result = await pool.query(
+    const rows = await queryAll(
       'SELECT * FROM tasks WHERE user_id = $1 ORDER BY created_at DESC',
       [req.params.userId.toString()]
     );
 
-    const tasks = result.rows.map(t => ({
+    const tasks = rows.map(t => ({
       id: t.id,
       _id: t.id.toString(),
       task: t.task,
       time: t.time,
-      reminder: t.reminder,
-      completed: t.completed,
+      reminder: Boolean(t.reminder),
+      completed: Boolean(t.completed),
       userId: t.user_id,
       createdAt: t.created_at
     }));
@@ -265,7 +386,7 @@ app.get('/tasks/:userId', async (req, res) => {
 
   } catch (err) {
     logger.error('Get tasks error', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: err.message, error: err.message });
   }
 });
 
@@ -277,33 +398,32 @@ app.put('/tasks/:id', async (req, res) => {
     const taskId = req.params.id;
     const { task, time, reminder, completed } = req.body;
 
-    // Fetch existing task
-    const existing = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
-    if (existing.rows.length === 0) {
-      return res.status(404).json({ error: "Task not found" });
+    const current = await queryOne('SELECT * FROM tasks WHERE id = $1', [taskId]);
+    if (!current) {
+      return res.status(404).json({ message: "Task not found", error: "Task not found" });
     }
 
-    const current = existing.rows[0];
     const updatedTask = task !== undefined ? task : current.task;
     const updatedTime = time !== undefined ? time : current.time;
-    const updatedReminder = reminder !== undefined ? !!reminder : current.reminder;
-    const updatedCompleted = completed !== undefined ? !!completed : current.completed;
+    const updatedReminder = reminder !== undefined ? (reminder ? 1 : 0) : current.reminder;
+    const updatedCompleted = completed !== undefined ? (completed ? 1 : 0) : current.completed;
 
-    const result = await pool.query(
-      'UPDATE tasks SET task = $1, time = $2, reminder = $3, completed = $4 WHERE id = $5 RETURNING *',
+    await executeUpdateOrDelete(
+      'UPDATE tasks SET task = $1, time = $2, reminder = $3, completed = $4 WHERE id = $5',
       [updatedTask, updatedTime, updatedReminder, updatedCompleted, taskId]
     );
 
-    const t = result.rows[0];
+    const updated = await queryOne('SELECT * FROM tasks WHERE id = $1', [taskId]);
+
     const responseTask = {
-      id: t.id,
-      _id: t.id.toString(),
-      task: t.task,
-      time: t.time,
-      reminder: t.reminder,
-      completed: t.completed,
-      userId: t.user_id,
-      createdAt: t.created_at
+      id: updated.id,
+      _id: updated.id.toString(),
+      task: updated.task,
+      time: updated.time,
+      reminder: Boolean(updated.reminder),
+      completed: Boolean(updated.completed),
+      userId: updated.user_id,
+      createdAt: updated.created_at
     };
 
     logger.info(`Task updated: ${taskId}`);
@@ -311,7 +431,7 @@ app.put('/tasks/:id', async (req, res) => {
 
   } catch (err) {
     logger.error('Update task error', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: err.message, error: err.message });
   }
 });
 
@@ -321,13 +441,13 @@ app.put('/tasks/:id', async (req, res) => {
 app.delete('/tasks/:id', async (req, res) => {
   try {
     const taskId = req.params.id;
-    await pool.query('DELETE FROM tasks WHERE id = $1', [taskId]);
+    await executeUpdateOrDelete('DELETE FROM tasks WHERE id = $1', [taskId]);
     logger.info(`Task deleted: ${taskId}`);
     res.json({ message: "Deleted" });
 
   } catch (err) {
     logger.error('Delete task error', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: err.message, error: err.message });
   }
 });
 

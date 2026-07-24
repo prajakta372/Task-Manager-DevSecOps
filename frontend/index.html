@@ -54,12 +54,12 @@ async function loginUser() {
             window.location.href = "dashboard.html";
 
         } else {
-            alert(data.message || "Login failed");
+            alert(data.message || data.error || "Login failed");
         }
 
     } catch (error) {
         console.error("ERROR:", error);
-        alert("Server error");
+        alert("Server connection error. Make sure backend server is running on http://localhost:3000");
     }
 }
 </script>

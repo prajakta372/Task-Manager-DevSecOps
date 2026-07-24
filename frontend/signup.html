@@ -57,12 +57,12 @@ async function signup() {
             // ✅ Redirect to login
             window.location.href = "index.html";
         } else {
-            alert(data.message || "Signup failed");
+            alert(data.message || data.error || "Signup failed");
         }
 
     } catch (error) {
         console.error("Signup error:", error);
-        alert("Server error. Please try again.");
+        alert("Server connection error. Make sure backend server is running on http://localhost:3000");
     }
 }
 
