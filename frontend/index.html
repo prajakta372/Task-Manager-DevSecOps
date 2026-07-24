@@ -23,6 +23,8 @@
 </div>
 
 <script>
+const BASE_URL = `${window.location.protocol}//${window.location.hostname}:3000`;
+
 async function loginUser() {
     const email = document.getElementById("email").value;
     const password = document.getElementById("password").value;
@@ -30,7 +32,7 @@ async function loginUser() {
     console.log("Login clicked");
 
     try {
-        const res = await fetch("http://localhost:3000/login", {
+        const res = await fetch(`${BASE_URL}/login`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
@@ -59,7 +61,7 @@ async function loginUser() {
 
     } catch (error) {
         console.error("ERROR:", error);
-        alert("Server connection error. Make sure backend server is running on http://localhost:3000");
+        alert(`Server connection error. Make sure backend server is running on ${BASE_URL}`);
     }
 }
 </script>

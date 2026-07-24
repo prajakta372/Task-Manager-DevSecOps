@@ -25,7 +25,7 @@
 
 <script>
 
-const BASE_URL = "http://localhost:3000";
+const BASE_URL = `${window.location.protocol}//${window.location.hostname}:3000`;
 
 // 🚀 SIGNUP FUNCTION
 async function signup() {
@@ -62,7 +62,7 @@ async function signup() {
 
     } catch (error) {
         console.error("Signup error:", error);
-        alert("Server connection error. Make sure backend server is running on http://localhost:3000");
+        alert(`Server connection error. Make sure backend server is running on ${BASE_URL}`);
     }
 }
 
