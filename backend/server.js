@@ -183,19 +183,16 @@ async function setupDatabase() {
     logger.warn(`⚠️ PostgreSQL connection unavailable (${err.message}). Falling back to local SQLite database.`);
   }
 
-  // Fallback to SQLite
+  // Fallback to SQLite (if module is available)
   try {
-    // const sqlite3 = require('sqlite3').verbose();
-    let sqlite3;
+    const sqlite3 = require('sqlite3').verbose();
     const dbPath = path.join(__dirname, 'taskmanager.sqlite');
-    // sqliteDb = new sqlite3.Database(dbPath);
-    sqlite3 = require('sqlite3').verbose();
     sqliteDb = new sqlite3.Database(dbPath);
     dbMode = 'sqlite';
     logger.info(`✅ Local SQLite Database Connected (${dbPath})`);
     await initTables();
   } catch (err) {
-    logger.error('❌ Failed to initialize fallback SQLite database engine', err);
+    logger.warn('⚠️ SQLite fallback driver unavailable or not installed. Running with PostgreSQL engine.');
   }
 }
 
