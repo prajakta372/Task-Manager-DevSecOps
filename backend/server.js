@@ -5,7 +5,6 @@ const bcrypt = require('bcrypt');
 const morgan = require('morgan');
 const path = require('path');
 const { Pool } = require('pg');
-const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 
@@ -186,13 +185,14 @@ async function setupDatabase() {
 
   // Fallback to SQLite
   try {
+    const sqlite3 = require('sqlite3').verbose();
     const dbPath = path.join(__dirname, 'taskmanager.sqlite');
     sqliteDb = new sqlite3.Database(dbPath);
     dbMode = 'sqlite';
     logger.info(`✅ Local SQLite Database Connected (${dbPath})`);
     await initTables();
   } catch (err) {
-    logger.error('❌ Failed to initialize any database engine', err);
+    logger.error('❌ Failed to initialize fallback SQLite database engine', err);
   }
 }
 
