@@ -185,8 +185,11 @@ async function setupDatabase() {
 
   // Fallback to SQLite
   try {
-    const sqlite3 = require('sqlite3').verbose();
+    // const sqlite3 = require('sqlite3').verbose();
+    let sqlite3;
     const dbPath = path.join(__dirname, 'taskmanager.sqlite');
+    // sqliteDb = new sqlite3.Database(dbPath);
+    sqlite3 = require('sqlite3').verbose();
     sqliteDb = new sqlite3.Database(dbPath);
     dbMode = 'sqlite';
     logger.info(`✅ Local SQLite Database Connected (${dbPath})`);
