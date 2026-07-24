@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: taskmanager
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: backend
+
+  template:
+    metadata:
+      labels:
+        app: backend
+
+    spec:
+      containers:
+      - name: backend
+
+        image: prajakta372/taskmanager-backend:v1
+
+        imagePullPolicy: Always
+
+        ports:
+        - containerPort: 3000
+
+        env:
+
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: taskmanager-config
+              key: PORT
+
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: taskmanager-config
+              key: NODE_ENV
+
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: taskmanager-config
+              key: POSTGRES_DB
+
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: taskmanager-config
+              key: POSTGRES_HOST
+
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: taskmanager-config
+              key: POSTGRES_PORT
+
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: taskmanager-secret
+              key: POSTGRES_USER
+
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: taskmanager-secret
+              key: POSTGRES_PASSWORD
+
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-service:5432/taskdb"
+
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
