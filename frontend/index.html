@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,60 +12,61 @@
 
 <body>
 
-<div class="box">
-    <h2>Login</h2>
+    <div class="box">
+        <h2>Login</h2>
 
-    <input type="email" id="email" placeholder="Enter email">
-    <input type="password" id="password" placeholder="Enter password">
+        <input type="email" id="email" placeholder="Enter email">
+        <input type="password" id="password" placeholder="Enter password">
 
-   <button onclick="loginUser()">Login</button>
+        <button onclick="loginUser()">Login</button>
 
-    <p>Don't have account? <a href="signup.html">Signup</a></p>
-</div>
+        <p>Don't have account? <a href="signup.html">Signup</a></p>
+    </div>
 
-<script>
-const BASE_URL = `${window.location.protocol}//${window.location.hostname}:3000`;
+    <script>
+        const BASE_URL = `${window.location.protocol}//${window.location.hostname}:3000`;
 
-async function loginUser() {
-    const email = document.getElementById("email").value;
-    const password = document.getElementById("password").value;
+        async function loginUser() {
+            const email = document.getElementById("email").value;
+            const password = document.getElementById("password").value;
 
-    console.log("Login clicked");
+            console.log("Login clicked");
 
-    try {
-        const res = await fetch(`${BASE_URL}/login`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ email, password })
-        });
+            try {
+                const res = await fetch(`${BASE_URL}/login`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ email, password })
+                });
 
-        const data = await res.json();
-        console.log("FULL RESPONSE:", data);
+                const data = await res.json();
+                console.log("FULL RESPONSE:", data);
 
-        // ✅ FIX: check userId
-        if (res.ok && data.userId) {
+                // ✅ FIX: check userId
+                if (res.ok && data.userId) {
 
-            // ✅ SAVE userId (NOT token)
-            localStorage.setItem("userId", data.userId);
-            localStorage.setItem("role", data.role || "user");
+                    // ✅ SAVE userId (NOT token)
+                    localStorage.setItem("userId", data.userId);
+                    localStorage.setItem("role", data.role || "user");
 
-            console.log("USER ID SAVED:", localStorage.getItem("userId"));
+                    console.log("USER ID SAVED:", localStorage.getItem("userId"));
 
-            // ✅ REDIRECT
-            window.location.href = "dashboard.html";
+                    // ✅ REDIRECT
+                    window.location.href = "dashboard.html";
 
-        } else {
-            alert(data.message || data.error || "Login failed");
+                } else {
+                    alert(data.message || data.error || "Login failed");
+                }
+
+            } catch (error) {
+                console.error("ERROR:", error);
+                alert(`Server connection error. Make sure backend server is running on ${BASE_URL}`);
+            }
         }
-
-    } catch (error) {
-        console.error("ERROR:", error);
-        alert(`Server connection error. Make sure backend server is running on ${BASE_URL}`);
-    }
-}
-</script>
+    </script>
 
 </body>
+
 </html>
