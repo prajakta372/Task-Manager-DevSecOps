@@ -60,6 +60,42 @@ pipeline {
             }
         }
 
+        stage('Deploy to Kubernetes') {
+    steps {
+        echo 'Deploying Task Manager to Kubernetes...'
+
+        sh '''
+            ssh -i /var/lib/jenkins/.ssh/taskmanager_key \
+                -o StrictHostKeyChecking=no \
+                ubuntu@10.0.1.170 \
+                "sudo kubectl apply -f /home/ubuntu/Task-Manager-DevSecOps/k8s/"
+        '''
+    }
+}
+
+stage('Verify Deployment') {
+    steps {
+        echo 'Checking Kubernetes deployment status...'
+
+        sh '''
+            ssh -i /var/lib/jenkins/.ssh/taskmanager_key \
+                -o StrictHostKeyChecking=no \
+                ubuntu@10.0.1.170 \
+                "sudo kubectl rollout status deployment/backend -n taskmanager --timeout=120s"
+
+            ssh -i /var/lib/jenkins/.ssh/taskmanager_key \
+                -o StrictHostKeyChecking=no \
+                ubuntu@10.0.1.170 \
+                "sudo kubectl rollout status deployment/frontend -n taskmanager --timeout=120s"
+
+            ssh -i /var/lib/jenkins/.ssh/taskmanager_key \
+                -o StrictHostKeyChecking=no \
+                ubuntu@10.0.1.170 \
+                "sudo kubectl get pods -n taskmanager"
+        '''
+    }
+}
+
     }
 
     post {
