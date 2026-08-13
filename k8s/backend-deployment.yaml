@@ -20,7 +20,7 @@ spec:
       containers:
       - name: backend
 
-        image: prajakta372/taskmanager-backend:v1
+        image: prajakta372/taskmanager-backend:latest
 
         imagePullPolicy: Always
 
